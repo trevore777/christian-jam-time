@@ -19,7 +19,7 @@ function RemoteVideo({ stream }) {
   return stream ? <video ref={ref} autoPlay playsInline style={videoStyle} /> : null;
 }
 
-export default function LiveVideoPanel({ participants = [], participantId = '' }) {
+export default function LiveVideoPanel({ participants = [], participantId = '', roomCode = '' }) {
   const localVideoRef = useRef(null);
   const streamRef = useRef(null);
   const peersRef = useRef(new Map());
@@ -33,16 +33,15 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
 
   const me = participants.find(person => person.id === participantId);
   const others = participants.filter(person => person.id !== participantId);
-  const roomCode = () => document.querySelector('.roomBadge b')?.textContent?.trim() || '';
 
   async function sendSignal(to, signal) {
-    const code = roomCode();
-    if (!code || !participantId || !to) return;
-    await fetch(`/api/rooms/${encodeURIComponent(code)}/signal`, {
+    if (!roomCode || !participantId || !to) return;
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/signal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ from: participantId, to, signal }),
     });
+    if (!response.ok) throw new Error(`Signal send failed (${response.status})`);
   }
 
   function closePeer(peerId) {
@@ -72,6 +71,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
     });
     peersRef.current.set(peerId, pc);
     pendingCandidatesRef.current.set(peerId, []);
+    setConnectionStates(prev => ({ ...prev, [peerId]: 'connecting' }));
 
     streamRef.current?.getTracks().forEach(track => pc.addTrack(track, streamRef.current));
 
@@ -115,6 +115,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
       await sendSignal(peerId, { type: 'offer', sdp: pc.localDescription });
     } catch (error) {
       console.warn('Offer failed', error);
+      setConnectionStates(prev => ({ ...prev, [peerId]: 'signal error' }));
     } finally {
       negotiatingRef.current.delete(peerId);
     }
@@ -160,34 +161,45 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
       }
     } catch (error) {
       console.warn('Signal handling failed', error);
+      setConnectionStates(prev => ({ ...prev, [peerId]: 'signal error' }));
     }
   }
 
   useEffect(() => {
-    if (!participantId) return;
+    if (!participantId || !roomCode) return;
     let stopped = false;
 
     const pollSignals = async () => {
-      const code = roomCode();
-      if (!code || stopped) return;
+      if (stopped) return;
       try {
-        const response = await fetch(`/api/rooms/${encodeURIComponent(code)}/signal?participantId=${encodeURIComponent(participantId)}`, { cache: 'no-store' });
+        const response = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/signal?participantId=${encodeURIComponent(participantId)}`, { cache: 'no-store' });
         const payload = await response.json();
         for (const message of payload.signals || []) await handleSignal(message);
       } catch {}
     };
 
     pollSignals();
-    const timer = setInterval(pollSignals, 800);
+    const timer = setInterval(pollSignals, 700);
     return () => { stopped = true; clearInterval(timer); };
-  }, [participantId]);
+  }, [participantId, roomCode]);
 
   useEffect(() => {
     const activeIds = new Set(others.map(person => person.id));
     for (const peerId of peersRef.current.keys()) {
       if (!activeIds.has(peerId)) closePeer(peerId);
     }
-  }, [participants.map(person => person.id).join('|')]);
+
+    if (!streamRef.current) return;
+    for (const person of others) {
+      const peerId = person.id;
+      if (!peerId) continue;
+      const pc = makePeer(peerId);
+      attachLocalTracks(pc).then(async () => {
+        if (participantId < peerId) await createOffer(peerId);
+        else await sendSignal(peerId, { type: 'renegotiate' });
+      }).catch(() => {});
+    }
+  }, [participants.map(person => person.id).join('|'), participantId, roomCode]);
 
   useEffect(() => {
     return () => {
@@ -235,7 +247,6 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
       }
 
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      setTimeout(() => announceMediaChange().catch(() => {}), 0);
       return stream;
     } catch (error) {
       const message = error?.name === 'NotAllowedError'
@@ -253,6 +264,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
       const stream = await ensureStream({ video: true, audio: micOn });
       if (!stream) return;
       stream.getVideoTracks().forEach(track => { track.enabled = true; });
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       setCameraOn(true);
       await announceMediaChange();
       return;
@@ -278,7 +290,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
     streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    for (const peerId of peersRef.current.keys()) closePeer(peerId);
+    for (const peerId of [...peersRef.current.keys()]) closePeer(peerId);
     setCameraOn(false);
     setMicOn(false);
     setMediaError('');
@@ -315,7 +327,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
               <RemoteVideo stream={remoteStream} />
               {!remoteStream && <div className="videoInitial">{(person.name || '?')[0].toUpperCase()}</div>}
               <span style={{ zIndex: 2 }}>{person.name} · {person.instrument}{person.isLeader ? ' · Leader' : ''}</span>
-              <div style={waitBadge}>{remoteStream ? 'Connected' : state === 'connecting' ? 'Connecting…' : 'Waiting for camera'}</div>
+              <div style={waitBadge}>{remoteStream ? 'Connected' : state === 'connecting' || state === 'new' ? 'Connecting…' : state === 'signal error' ? 'Signal error' : state === 'failed' ? 'Connection failed' : 'Waiting for camera'}</div>
             </div>
           );
         })}
@@ -323,7 +335,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
         {!participants.length && <div className="videoTile"><div className="videoInitial">♪</div><span>Waiting for participants</span></div>}
       </div>
 
-      <p className="hint">Video and audio now connect directly between people in the same Jam Room. For best results while testing instruments, use headphones to avoid echo.</p>
+      <p className="hint">Video and audio connect directly between people in the same Jam Room. For best results while testing instruments, use headphones to avoid echo.</p>
     </section>
   );
 }
