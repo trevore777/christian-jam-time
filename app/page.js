@@ -250,7 +250,7 @@ export default function HomePage() {
         </aside>
 
         <section className="mainColumn">
-          <LiveVideoPanel participants={participants} participantId={participantId} />
+          <LiveVideoPanel participants={participants} participantId={participantId} roomCode={room?.code || ''} />
 
           <section className="card songStage">
             <div className="stageHeader">
