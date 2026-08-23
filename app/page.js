@@ -108,8 +108,12 @@ export default function HomePage() {
 
   async function joinJam(e) {
     e.preventDefault();
-    const raw = joinCode.trim().toUpperCase(); if (!raw) return;
-    const code = raw.startsWith('CJT-') ? raw : `CJT-${raw}`;
+    const digits = joinCode.replace(/\D/g, '').slice(0, 4);
+    if (digits.length !== 4) {
+      setError('Enter the four-digit Jam number.');
+      return;
+    }
+    const code = `CJT-${digits}`;
     setBusy(true); setError('');
     try {
       const payload = await api(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: JSON.stringify({ name, instrument }) });
@@ -194,7 +198,7 @@ export default function HomePage() {
       <div className="brandMark">♪</div><p className="eyebrow">ONLINE WORSHIP & FELLOWSHIP</p><h1>Christian Jam Time</h1>
       <p className="lead">Meet together online, choose songs from the shared songbook, build a playlist and worship from the same chord sheet.</p>
       <div className="profileFields"><label>Your name<input value={name} onChange={e => setName(e.target.value)} maxLength={40} /></label><label>Instrument<select value={instrument} onChange={e => setInstrument(e.target.value)}>{INSTRUMENTS.map(item => <option key={item}>{item}</option>)}</select></label></div>
-      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><input aria-label="Jam code" placeholder="CJT-4271" value={joinCode} onChange={e => setJoinCode(e.target.value)} maxLength={8} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
+      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><span style={{display:'flex',alignItems:'center',fontWeight:900,padding:'0 2px'}}>CJT-</span><input aria-label="Four digit Jam number" placeholder="4271" value={joinCode} onChange={e => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" pattern="[0-9]*" autoComplete="off" autoCorrect="off" spellCheck="false" maxLength={4} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
       {error && <div className="homeError" role="alert">{error}</div>}
       <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
       {!songbookReady && <SongbookImporter onImported={loadSongs} />}
