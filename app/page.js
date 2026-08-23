@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { songs } from '../data/songs';
+import LiveVideoPanel from '../components/LiveVideoPanel';
 
 const NOTES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const INSTRUMENTS = ['Guitar', 'Bass', 'Piano', 'Drums', 'Vocals', 'Other'];
@@ -249,14 +250,7 @@ export default function HomePage() {
         </aside>
 
         <section className="mainColumn">
-          <section className="card videoCard">
-            <div className="sectionHeading"><div><small>ONLINE TOGETHER</small><h2>Live Jam</h2></div><button className="secondary compact" disabled>Camera coming next</button></div>
-            <div className="videoGrid">
-              {participants.length ? participants.map(person => (
-                <div className="videoTile" key={person.id}><div className="videoInitial">{(person.name || '?')[0].toUpperCase()}</div><span>{person.name} · {person.instrument}{person.isLeader ? ' · Leader' : ''}</span></div>
-              )) : <div className="videoTile"><div className="videoInitial">♪</div><span>Waiting for participants</span></div>}
-            </div>
-          </section>
+          <LiveVideoPanel participants={participants} participantId={participantId} />
 
           <section className="card songStage">
             <div className="stageHeader">
