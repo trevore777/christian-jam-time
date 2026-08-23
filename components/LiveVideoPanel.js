@@ -2,6 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+const controlRow = { display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' };
+const controlButton = { border: 0, borderRadius: 10, padding: '9px 12px', minHeight: 40, fontWeight: 800, background: '#eee6d7', color: '#1e2a22' };
+const activeButton = { ...controlButton, background: '#2c7c49', color: '#fff' };
+const stopButton = { ...controlButton, background: '#8b3f3f', color: '#fff' };
+const videoStyle = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 };
+const badgeRow = { position: 'absolute', right: 8, top: 8, display: 'flex', gap: 5, zIndex: 2 };
+const badge = { background: 'rgba(25,29,25,.7)', color: '#fff', borderRadius: 8, padding: '4px 6px', fontSize: 12 };
+const waitBadge = { position: 'absolute', right: 8, top: 8, background: 'rgba(255,255,255,.8)', color: '#39433c', borderRadius: 8, padding: '4px 6px', fontSize: 10, fontWeight: 800, zIndex: 2 };
+
 export default function LiveVideoPanel({ participants = [], participantId = '' }) {
   const localVideoRef = useRef(null);
   const streamRef = useRef(null);
@@ -22,6 +31,11 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
   async function ensureStream({ video, audio }) {
     setMediaError('');
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMediaError('Camera and microphone access is not supported by this browser.');
+        return null;
+      }
+
       let stream = streamRef.current;
       if (!stream) {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -46,7 +60,9 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
     } catch (error) {
       const message = error?.name === 'NotAllowedError'
         ? 'Camera or microphone permission was blocked. Allow access in your browser and try again.'
-        : 'Unable to access the camera or microphone on this device.';
+        : error?.name === 'NotFoundError'
+          ? 'No camera or microphone was found on this device.'
+          : 'Unable to access the camera or microphone on this device.';
       setMediaError(message);
       return null;
     }
@@ -87,28 +103,28 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
 
   return (
     <section className="card videoCard">
-      <div className="sectionHeading videoHeading">
+      <div className="sectionHeading">
         <div><small>ONLINE TOGETHER</small><h2>Live Jam</h2></div>
-        <div className="mediaControls">
-          <button className={cameraOn ? 'mediaButton active' : 'mediaButton'} type="button" onClick={toggleCamera}>
+        <div style={controlRow}>
+          <button style={cameraOn ? activeButton : controlButton} type="button" onClick={toggleCamera}>
             {cameraOn ? 'Camera On' : 'Start Camera'}
           </button>
-          <button className={micOn ? 'mediaButton active' : 'mediaButton'} type="button" onClick={toggleMic}>
+          <button style={micOn ? activeButton : controlButton} type="button" onClick={toggleMic}>
             {micOn ? 'Mic On' : 'Start Mic'}
           </button>
-          {(cameraOn || micOn) && <button className="mediaButton danger" type="button" onClick={stopMedia}>Stop</button>}
+          {(cameraOn || micOn) && <button style={stopButton} type="button" onClick={stopMedia}>Stop</button>}
         </div>
       </div>
 
-      {mediaError && <div className="mediaError" role="alert">{mediaError}</div>}
+      {mediaError && <div role="alert" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: '#f7e9e6', color: '#74352f', fontSize: 13 }}>{mediaError}</div>}
 
       <div className="videoGrid">
         {me && (
-          <div className="videoTile localVideoTile">
-            <video ref={localVideoRef} autoPlay muted playsInline className={cameraOn ? 'participantVideo visible' : 'participantVideo'} />
+          <div className="videoTile">
+            {cameraOn && <video ref={localVideoRef} autoPlay muted playsInline style={videoStyle} />}
             {!cameraOn && <div className="videoInitial">{(me.name || '?')[0].toUpperCase()}</div>}
-            <span>{me.name} · {me.instrument}{me.isLeader ? ' · Leader' : ''} · You</span>
-            <div className="mediaBadges"><b>{cameraOn ? '📹' : '🚫📹'}</b><b>{micOn ? '🎙️' : '🔇'}</b></div>
+            <span style={{ zIndex: 2 }}>{me.name} · {me.instrument}{me.isLeader ? ' · Leader' : ''} · You</span>
+            <div style={badgeRow}><b style={badge}>{cameraOn ? '📹' : '🚫📹'}</b><b style={badge}>{micOn ? '🎙️' : '🔇'}</b></div>
           </div>
         )}
 
@@ -116,7 +132,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
           <div className="videoTile" key={person.id}>
             <div className="videoInitial">{(person.name || '?')[0].toUpperCase()}</div>
             <span>{person.name} · {person.instrument}{person.isLeader ? ' · Leader' : ''}</span>
-            <div className="waitingBadge">Video connection next</div>
+            <div style={waitBadge}>Video connection next</div>
           </div>
         ))}
 
@@ -125,7 +141,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '' }
         )}
       </div>
 
-      <p className="hint videoHint">Your camera and microphone now work inside the Jam Room. The next connection step sends this media to the other people in the same room using WebRTC.</p>
+      <p className="hint">Your camera and microphone now work inside the Jam Room. The next connection step sends this media to the other people in the same room using WebRTC.</p>
     </section>
   );
 }
