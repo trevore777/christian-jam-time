@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import LiveVideoPanel from '../components/LiveVideoPanel';
 import ChordSheetEditor from '../components/ChordSheetEditor';
 import SongbookImporter from '../components/SongbookImporter';
+import SongSuggestions from '../components/SongSuggestions';
 
 const NOTES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const INSTRUMENTS = ['Guitar', 'Bass', 'Piano', 'Drums', 'Vocals', 'Other'];
@@ -65,6 +66,7 @@ export default function HomePage() {
   }, [query, songs]);
 
   const playlist = room?.playlist || [];
+  const suggestions = room?.suggestions || [];
   const currentIndex = room?.currentIndex ?? -1;
   const shift = room?.shift ?? 0;
   const currentSong = currentIndex >= 0 ? playlist[currentIndex] : null;
@@ -124,8 +126,38 @@ export default function HomePage() {
     } catch (err) { setSyncStatus(err.message); }
   }
 
+  async function suggestSong(song) {
+    if (!room?.code || !participantId) return;
+    setSyncStatus('Sending suggestion…');
+    try {
+      const payload = await api(`/api/rooms/${room.code}/suggestions`, {
+        method: 'POST',
+        body: JSON.stringify({ participantId, song }),
+      });
+      setRoom(payload.room);
+      setSyncStatus('Suggested');
+    } catch (err) {
+      setSyncStatus(err.message);
+    }
+  }
+
+  async function resolveSuggestion(suggestionId, action) {
+    if (!leader || !room?.code) return;
+    setSyncStatus(action === 'approve' ? 'Adding suggestion…' : 'Dismissing suggestion…');
+    try {
+      const payload = await api(`/api/rooms/${room.code}/suggestions`, {
+        method: 'PATCH',
+        body: JSON.stringify({ participantId, suggestionId, action }),
+      });
+      setRoom(payload.room);
+      setSyncStatus(action === 'approve' ? 'Added to playlist' : 'Suggestion dismissed');
+    } catch (err) {
+      setSyncStatus(err.message);
+    }
+  }
+
   function addSong(song) {
-    if (!leader) return;
+    if (!leader) return suggestSong(song);
     const existing = playlist.findIndex(item => item.number === song.number);
     if (existing >= 0) return updateShared({ playlist, currentIndex: existing, shift: 0 });
     const next = [...playlist, song];
@@ -164,18 +196,19 @@ export default function HomePage() {
       <div className="profileFields"><label>Your name<input value={name} onChange={e => setName(e.target.value)} maxLength={40} /></label><label>Instrument<select value={instrument} onChange={e => setInstrument(e.target.value)}>{INSTRUMENTS.map(item => <option key={item}>{item}</option>)}</select></label></div>
       <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><input aria-label="Jam code" placeholder="CJT-4271" value={joinCode} onChange={e => setJoinCode(e.target.value)} maxLength={8} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
       {error && <div className="homeError" role="alert">{error}</div>}
-      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Live Playlist</b><span>Everyone follows the same song order.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
+      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
       {!songbookReady && <SongbookImporter onImported={loadSongs} />}
     </section></main>;
   }
 
   return <main className="appShell">
     <header className="topbar"><button className="brandButton" onClick={leaveRoom}><span>♪</span><b>Christian Jam Time</b></button><div className="roomBadge">Room <b>{room?.code}</b></div><div className="userBadge">{name || 'Guest'} · {instrument}{leader ? ' · Leader' : ''}</div></header>
-    <div className={`connectionBanner ${syncStatus === 'Connected' || syncStatus === 'Synced' ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <b> · Following leader</b>}</div>
+    <div className={`connectionBanner ${syncStatus === 'Connected' || syncStatus === 'Synced' || syncStatus === 'Suggested' || syncStatus === 'Added to playlist' ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <b> · Following leader</b>}</div>
     <div className="workspace">
       <aside className="sidebar">
         <section className="card"><div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div><div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : ''}</span></div></div>)}</div><p className="hint">Share <b>{room?.code}</b> with friends. Everyone sees the leader&apos;s song, key and saved chord-sheet changes.</p></section>
-        <section className="card songbookCard"><div className="sectionHeading"><div><small>MASTER SONGBOOK</small><h2>Choose a song</h2></div><span>{songs.length} loaded</span></div><input className="searchInput" type="search" placeholder="Search title, first line, scripture or number" value={query} onChange={e => setQuery(e.target.value)} />{!leader && <p className="hint followerHint">Browse the songbook here. The leader controls the shared playlist.</p>}<div className="songList">{filtered.map(song => <div className="songItem" key={song.number}><button className="songInfo" onClick={() => addSong(song)} disabled={!leader}><b>{song.number}. {song.title}</b><span>Key {song.key || '—'} · Page {(song.pages || []).join(', ') || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</span></button><button className="addButton" onClick={() => addSong(song)} aria-label={`Add ${song.title}`} disabled={!leader}>+</button></div>)}</div></section>
+        <section className="card songbookCard"><div className="sectionHeading"><div><small>MASTER SONGBOOK</small><h2>{leader ? 'Choose a song' : 'Suggest a song'}</h2></div><span>{songs.length} loaded</span></div><input className="searchInput" type="search" placeholder="Search title, first line, scripture or number" value={query} onChange={e => setQuery(e.target.value)} />{!leader && <p className="hint followerHint">Choose any song and press <b>Suggest</b>. The leader can then add it to tonight&apos;s playlist.</p>}<div className="songList">{filtered.map(song => <div className="songItem" key={song.number}><button className="songInfo" onClick={() => addSong(song)}><b>{song.number}. {song.title}</b><span>Key {song.key || '—'} · Page {(song.pages || []).join(', ') || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</span></button><button className="addButton" onClick={() => addSong(song)} aria-label={`${leader ? 'Add' : 'Suggest'} ${song.title}`}>{leader ? '+' : 'Suggest'}</button></div>)}</div></section>
+        <SongSuggestions suggestions={suggestions} leader={leader} onResolve={resolveSuggestion} />
       </aside>
       <section className="mainColumn">
         <LiveVideoPanel participants={participants} participantId={participantId} roomCode={room?.code || ''} />
@@ -183,7 +216,7 @@ export default function HomePage() {
           <div className="stageHeader"><div><small>NOW PLAYING</small><h2>{currentSong ? currentSong.title : 'Choose a song from the songbook'}</h2><p>{currentSong ? `Song ${currentSong.number} · Songbook page ${(currentSong.pages || []).join(', ') || '—'} · Original key ${currentSong.key || '—'}` : leader ? 'Build tonight’s playlist from the master song list.' : 'Waiting for the leader to choose the first song.'}</p></div><div className="keyControl"><span>Shared key</span><div><button onClick={() => currentSong && updateShared({ playlist, currentIndex, shift: shift - 1 })} disabled={!currentSong || !leader}>−</button><strong>{displayedKey}</strong><button onClick={() => currentSong && updateShared({ playlist, currentIndex, shift: shift + 1 })} disabled={!currentSong || !leader}>+</button></div></div></div>
           <div className="chordSheet"><ChordSheetEditor song={currentSong} shift={shift} canEdit={leader} onSave={saveCurrentSong} /></div>
           <div className="playlistHeader"><div><small>TONIGHT&apos;S PLAYLIST</small><h3>{playlist.length ? `${playlist.length} song${playlist.length === 1 ? '' : 's'}` : 'No songs yet'}</h3></div></div><div className="playlist">{playlist.map((song, index) => <div className={`playlistItem ${index === currentIndex ? 'active' : ''}`} key={`${song.number}-${index}`}><button className="playlistSelect" disabled={!leader} onClick={() => updateShared({ playlist, currentIndex: index, shift: 0 })}><span>{index + 1}</span><div><b>{song.title}</b><small>Key {song.key || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</small></div></button><button className="removeButton" disabled={!leader} onClick={() => removeSong(index)} aria-label={`Remove ${song.title}`}>×</button></div>)}</div>
-          <div className="transport"><button className="secondary" disabled={!leader || currentIndex <= 0} onClick={() => updateShared({ playlist, currentIndex: currentIndex - 1, shift: 0 })}>← Previous</button><div className="statusText">{leader ? 'You control the shared song and can save chord corrections.' : 'Following the room leader.'}</div><button className="primary" disabled={!leader || currentIndex < 0 || currentIndex >= playlist.length - 1} onClick={() => updateShared({ playlist, currentIndex: currentIndex + 1, shift: 0 })}>Next Song →</button></div>
+          <div className="transport"><button className="secondary" disabled={!leader || currentIndex <= 0} onClick={() => updateShared({ playlist, currentIndex: currentIndex - 1, shift: 0 })}>← Previous</button><div className="statusText">{leader ? 'You control the shared song and review participant suggestions.' : 'Suggest songs from the songbook; the leader controls the shared playlist.'}</div><button className="primary" disabled={!leader || currentIndex < 0 || currentIndex >= playlist.length - 1} onClick={() => updateShared({ playlist, currentIndex: currentIndex + 1, shift: 0 })}>Next Song →</button></div>
         </section>
       </section>
     </div>
