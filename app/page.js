@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import LiveVideoPanel from '../components/LiveVideoPanel';
 import ChordSheetEditor from '../components/ChordSheetEditor';
+import SongbookImporter from '../components/SongbookImporter';
 
 const NOTES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const INSTRUMENTS = ['Guitar', 'Bass', 'Piano', 'Drums', 'Vocals', 'Other'];
@@ -161,9 +162,10 @@ export default function HomePage() {
       <div className="brandMark">♪</div><p className="eyebrow">ONLINE WORSHIP & FELLOWSHIP</p><h1>Christian Jam Time</h1>
       <p className="lead">Meet together online, choose songs from the shared songbook, build a playlist and worship from the same chord sheet.</p>
       <div className="profileFields"><label>Your name<input value={name} onChange={e => setName(e.target.value)} maxLength={40} /></label><label>Instrument<select value={instrument} onChange={e => setInstrument(e.target.value)}>{INSTRUMENTS.map(item => <option key={item}>{item}</option>)}</select></label></div>
-      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><input aria-label="Jam code" placeholder="CJT-4271" value={joinCode} onChange={e => setJoinCode(e.target.value)} maxLength={8} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
+      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><input aria-label="Jam code" placeholder="CJT-4271" value={joinCode} onChange={e => setJoinCode(e.target.value)} maxLength={8} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
       {error && <div className="homeError" role="alert">{error}</div>}
-      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Songbook is being prepared.'}</span></div><div><b>Live Playlist</b><span>Everyone follows the same song order.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
+      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Live Playlist</b><span>Everyone follows the same song order.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
+      {!songbookReady && <SongbookImporter onImported={loadSongs} />}
     </section></main>;
   }
 
