@@ -99,9 +99,15 @@ export default function HomePage() {
   }, [screen, room?.code, participantId, name, instrument]);
 
   async function createJam() {
+    const leaderPin = window.prompt('Enter the 4-digit leader PIN:');
+    if (leaderPin === null) return;
+    if (!/^\d{4}$/.test(leaderPin.trim())) {
+      setError('Enter the 4-digit leader PIN.');
+      return;
+    }
     setBusy(true); setError('');
     try {
-      const payload = await api('/api/rooms/create', { method: 'POST', body: JSON.stringify({ name, instrument }) });
+      const payload = await api('/api/rooms/create', { method: 'POST', body: JSON.stringify({ name, instrument, leaderPin: leaderPin.trim() }) });
       setParticipantId(payload.participantId); setRoom(payload.room); setScreen('room');
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
@@ -119,6 +125,27 @@ export default function HomePage() {
       const payload = await api(`/api/rooms/${encodeURIComponent(code)}/join`, { method: 'POST', body: JSON.stringify({ name, instrument }) });
       setParticipantId(payload.participantId); setRoom(payload.room); setScreen('room');
     } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  async function takeLeaderControl() {
+    if (!room?.code || !participantId) return;
+    const leaderPin = window.prompt('Enter the 4-digit leader PIN:');
+    if (leaderPin === null) return;
+    if (!/^\d{4}$/.test(leaderPin.trim())) {
+      setSyncStatus('Enter the 4-digit leader PIN.');
+      return;
+    }
+    setSyncStatus('Checking leader PIN…');
+    try {
+      const payload = await api(`/api/rooms/${room.code}/leader`, {
+        method: 'POST',
+        body: JSON.stringify({ participantId, leaderPin: leaderPin.trim() }),
+      });
+      setRoom(payload.room);
+      setSyncStatus('Leader control enabled');
+    } catch (err) {
+      setSyncStatus(err.message);
+    }
   }
 
   async function updateShared(updates) {
@@ -198,16 +225,16 @@ export default function HomePage() {
       <div className="brandMark">♪</div><p className="eyebrow">ONLINE WORSHIP & FELLOWSHIP</p><h1>Christian Jam Time</h1>
       <p className="lead">Meet together online, choose songs from the shared songbook, build a playlist and worship from the same chord sheet.</p>
       <div className="profileFields"><label>Your name<input value={name} onChange={e => setName(e.target.value)} maxLength={40} /></label><label>Instrument<select value={instrument} onChange={e => setInstrument(e.target.value)}>{INSTRUMENTS.map(item => <option key={item}>{item}</option>)}</select></label></div>
-      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><span style={{display:'flex',alignItems:'center',fontWeight:900,padding:'0 2px'}}>CJT-</span><input aria-label="Four digit Jam number" placeholder="4271" value={joinCode} onChange={e => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" pattern="[0-9]*" autoComplete="off" autoCorrect="off" spellCheck="false" maxLength={4} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
+      <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Leader Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><span style={{display:'flex',alignItems:'center',fontWeight:900,padding:'0 2px'}}>CJT-</span><input aria-label="Four digit Jam number" placeholder="4271" value={joinCode} onChange={e => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" pattern="[0-9]*" autoComplete="off" autoCorrect="off" spellCheck="false" maxLength={4} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
       {error && <div className="homeError" role="alert">{error}</div>}
-      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Editable Chords</b><span>Leader corrections can be saved back to the master songbook.</span></div></div>
+      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Leader PIN</b><span>Leader control is protected while everyone else can join with the Jam code.</span></div></div>
       {!songbookReady && <SongbookImporter onImported={loadSongs} />}
     </section></main>;
   }
 
   return <main className="appShell">
     <header className="topbar"><button className="brandButton" onClick={leaveRoom}><span>♪</span><b>Christian Jam Time</b></button><div className="roomBadge">Room <b>{room?.code}</b></div><div className="userBadge">{name || 'Guest'} · {instrument}{leader ? ' · Leader' : ''}</div></header>
-    <div className={`connectionBanner ${syncStatus === 'Connected' || syncStatus === 'Synced' || syncStatus === 'Suggested' || syncStatus === 'Added to playlist' ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <b> · Following leader</b>}</div>
+    <div className={`connectionBanner ${syncStatus === 'Connected' || syncStatus === 'Synced' || syncStatus === 'Suggested' || syncStatus === 'Added to playlist' || syncStatus === 'Leader control enabled' ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <><b> · Following leader</b><button type="button" onClick={takeLeaderControl} style={{marginLeft:10,border:0,borderRadius:8,padding:'5px 9px',fontWeight:900,cursor:'pointer'}}>Leader Login</button></>}</div>
     <div className="workspace">
       <aside className="sidebar">
         <section className="card"><div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div><div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : ''}</span></div></div>)}</div><p className="hint">Share <b>{room?.code}</b> with friends. Everyone sees the leader&apos;s song, key and saved chord-sheet changes.</p></section>
