@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+const AUDIO_SETTINGS_KEY = 'cjtAudioSettings';
+const defaultAudioSettings = { inputDeviceId: '', outputDeviceId: '', musicMode: true };
 const controlRow = { display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' };
 const controlButton = { border: 0, borderRadius: 10, padding: '9px 12px', minHeight: 40, fontWeight: 800, background: '#eee6d7', color: '#1e2a22' };
 const activeButton = { ...controlButton, background: '#2c7c49', color: '#fff' };
@@ -11,11 +13,36 @@ const badgeRow = { position: 'absolute', right: 8, top: 8, display: 'flex', gap:
 const badge = { background: 'rgba(25,29,25,.7)', color: '#fff', borderRadius: 8, padding: '4px 6px', fontSize: 12 };
 const waitBadge = { position: 'absolute', right: 8, top: 8, background: 'rgba(255,255,255,.84)', color: '#39433c', borderRadius: 8, padding: '4px 6px', fontSize: 10, fontWeight: 800, zIndex: 2 };
 
-function RemoteVideo({ stream }) {
+function readAudioSettings() {
+  if (typeof window === 'undefined') return defaultAudioSettings;
+  try {
+    return { ...defaultAudioSettings, ...JSON.parse(localStorage.getItem(AUDIO_SETTINGS_KEY) || '{}') };
+  } catch {
+    return defaultAudioSettings;
+  }
+}
+
+function buildAudioConstraints(settings) {
+  return {
+    ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
+    echoCancellation: !settings.musicMode,
+    noiseSuppression: !settings.musicMode,
+    autoGainControl: !settings.musicMode,
+    channelCount: settings.musicMode ? { ideal: 2 } : { ideal: 1 },
+    latency: { ideal: 0.01 },
+  };
+}
+
+function RemoteVideo({ stream, outputDeviceId = '' }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream || null;
   }, [stream]);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video || !outputDeviceId || typeof video.setSinkId !== 'function') return;
+    video.setSinkId(outputDeviceId).catch(() => {});
+  }, [outputDeviceId, stream]);
   return stream ? <video ref={ref} autoPlay playsInline style={videoStyle} /> : null;
 }
 
@@ -30,9 +57,21 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   const [mediaError, setMediaError] = useState('');
   const [remoteStreams, setRemoteStreams] = useState({});
   const [connectionStates, setConnectionStates] = useState({});
+  const [audioSettings, setAudioSettings] = useState(defaultAudioSettings);
 
   const me = participants.find(person => person.id === participantId);
   const others = participants.filter(person => person.id !== participantId);
+
+  useEffect(() => {
+    const refresh = () => setAudioSettings(readAudioSettings());
+    refresh();
+    window.addEventListener('cjt-audio-settings-changed', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('cjt-audio-settings-changed', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
 
   async function sendSignal(to, signal) {
     if (!roomCode || !participantId || !to) return;
@@ -227,11 +266,13 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
         return null;
       }
 
+      const selectedAudio = readAudioSettings();
+      setAudioSettings(selectedAudio);
       let stream = streamRef.current;
       if (!stream) {
         stream = await navigator.mediaDevices.getUserMedia({
           video: video ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false,
-          audio: audio ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false,
+          audio: audio ? buildAudioConstraints(selectedAudio) : false,
         });
         streamRef.current = stream;
       } else {
@@ -240,7 +281,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
         if ((video && !hasVideo) || (audio && !hasAudio)) {
           const extra = await navigator.mediaDevices.getUserMedia({
             video: video && !hasVideo ? { facingMode: 'user' } : false,
-            audio: audio && !hasAudio ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false,
+            audio: audio && !hasAudio ? buildAudioConstraints(selectedAudio) : false,
           });
           extra.getTracks().forEach(track => stream.addTrack(track));
         }
@@ -251,8 +292,8 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
     } catch (error) {
       const message = error?.name === 'NotAllowedError'
         ? 'Camera or microphone permission was blocked. Allow access in your browser and try again.'
-        : error?.name === 'NotFoundError'
-          ? 'No camera or microphone was found on this device.'
+        : error?.name === 'NotFoundError' || error?.name === 'OverconstrainedError'
+          ? 'The selected audio interface is not available. Open Musician Audio Setup and choose an available input.'
           : 'Unable to access the camera or microphone on this device.';
       setMediaError(message);
       return null;
@@ -301,12 +342,14 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
       <div className="sectionHeading">
         <div><small>ONLINE TOGETHER</small><h2>Live Jam</h2></div>
         <div style={controlRow}>
+          <a href="/audio-setup" style={{ ...controlButton, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>🎚️ Audio Setup</a>
           <button style={cameraOn ? activeButton : controlButton} type="button" onClick={toggleCamera}>{cameraOn ? 'Camera On' : 'Start Camera'}</button>
           <button style={micOn ? activeButton : controlButton} type="button" onClick={toggleMic}>{micOn ? 'Mic On' : 'Start Mic'}</button>
           {(cameraOn || micOn) && <button style={stopButton} type="button" onClick={stopMedia}>Stop</button>}
         </div>
       </div>
 
+      {audioSettings.musicMode && <div style={{ marginBottom: 12, padding: '9px 12px', borderRadius: 10, background: '#edf5ee', color: '#315d3f', fontSize: 12, fontWeight: 800 }}>Music Mode ready{audioSettings.inputDeviceId ? ' · selected USB/audio input will be used' : ' · using the default audio input'}.</div>}
       {mediaError && <div role="alert" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: '#f7e9e6', color: '#74352f', fontSize: 13 }}>{mediaError}</div>}
 
       <div className="videoGrid">
@@ -324,7 +367,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
           const state = connectionStates[person.id] || 'waiting';
           return (
             <div className="videoTile" key={person.id}>
-              <RemoteVideo stream={remoteStream} />
+              <RemoteVideo stream={remoteStream} outputDeviceId={audioSettings.outputDeviceId} />
               {!remoteStream && <div className="videoInitial">{(person.name || '?')[0].toUpperCase()}</div>}
               <span style={{ zIndex: 2 }}>{person.name} · {person.instrument}{person.isLeader ? ' · Leader' : ''}</span>
               <div style={waitBadge}>{remoteStream ? 'Connected' : state === 'connecting' || state === 'new' ? 'Connecting…' : state === 'signal error' ? 'Signal error' : state === 'failed' ? 'Connection failed' : 'Waiting for camera'}</div>
@@ -335,7 +378,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
         {!participants.length && <div className="videoTile"><div className="videoInitial">♪</div><span>Waiting for participants</span></div>}
       </div>
 
-      <p className="hint">Video and audio connect directly between people in the same Jam Room. For best results while testing instruments, use headphones to avoid echo.</p>
+      <p className="hint">For instruments and singing, use <b>Audio Setup</b> before starting the mic. A Scarlett 2i2 or similar USB interface with wired headphones will improve local audio quality and reduce local latency; internet latency still depends on the connection between musicians.</p>
     </section>
   );
 }
