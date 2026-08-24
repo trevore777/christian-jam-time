@@ -11,12 +11,20 @@ const selectStyle = { width: '100%', padding: '12px 14px', borderRadius: 11, bor
 const primary = { border: 0, borderRadius: 11, padding: '12px 16px', background: '#2d6846', color: '#fff', fontWeight: 900, cursor: 'pointer' };
 const secondary = { ...primary, background: '#eee6d7', color: '#26342b' };
 
+const QUALITY_HELP = {
+  high: 'Best picture: up to 720p / 30 fps. Use on a strong connection.',
+  balanced: 'Good general setting: reduced video while keeping clear audio.',
+  low: 'Music priority: 360p / 15 fps and a much lower video bitrate.',
+  audio: 'Minimum bandwidth: no camera transmission; bandwidth is reserved for audio and room data.',
+};
+
 export default function AudioSetupPage() {
   const [inputs, setInputs] = useState([]);
   const [outputs, setOutputs] = useState([]);
   const [inputDeviceId, setInputDeviceId] = useState('');
   const [outputDeviceId, setOutputDeviceId] = useState('');
   const [musicMode, setMusicMode] = useState(true);
+  const [connectionQuality, setConnectionQuality] = useState('balanced');
   const [status, setStatus] = useState('Connect your USB interface, then allow microphone access.');
   const [level, setLevel] = useState(0);
   const [testing, setTesting] = useState(false);
@@ -30,6 +38,7 @@ export default function AudioSetupPage() {
       setInputDeviceId(saved.inputDeviceId || '');
       setOutputDeviceId(saved.outputDeviceId || '');
       setMusicMode(saved.musicMode !== false);
+      setConnectionQuality(['high','balanced','low','audio'].includes(saved.connectionQuality) ? saved.connectionQuality : 'balanced');
     } catch {}
     return stopTest;
   }, []);
@@ -37,9 +46,7 @@ export default function AudioSetupPage() {
   async function loadDevices(requestPermission = false) {
     try {
       let permissionStream = null;
-      if (requestPermission) {
-        permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      }
+      if (requestPermission) permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const devices = await navigator.mediaDevices.enumerateDevices();
       setInputs(devices.filter(d => d.kind === 'audioinput'));
       setOutputs(devices.filter(d => d.kind === 'audiooutput'));
@@ -110,9 +117,9 @@ export default function AudioSetupPage() {
   }
 
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ inputDeviceId, outputDeviceId, musicMode }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ inputDeviceId, outputDeviceId, musicMode, connectionQuality }));
     window.dispatchEvent(new Event('cjt-audio-settings-changed'));
-    setStatus('Saved. Christian Jam Time will use these settings the next time you start the microphone.');
+    setStatus('Saved. Christian Jam Time will use these audio and connection settings in the Live Jam.');
   }
 
   const outputSupported = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
@@ -122,8 +129,8 @@ export default function AudioSetupPage() {
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 40 }}>🎚️</div>
         <p style={{ margin: '4px 0', fontSize: 12, fontWeight: 900, letterSpacing: '.14em', color: '#69746b' }}>MUSICIAN AUDIO SETUP</p>
-        <h1 style={{ margin: '6px 0 10px', fontSize: 'clamp(32px,6vw,54px)' }}>Set up your audio interface</h1>
-        <p style={{ maxWidth: 680, margin: '0 auto', lineHeight: 1.6, color: '#657067' }}>For a Focusrite Scarlett 2i2 or similar USB interface, connect it before opening the Jam. Use wired headphones from the interface where possible.</p>
+        <h1 style={{ margin: '6px 0 10px', fontSize: 'clamp(32px,6vw,54px)' }}>Set up your audio & connection</h1>
+        <p style={{ maxWidth: 680, margin: '0 auto', lineHeight: 1.6, color: '#657067' }}>A Scarlett 2i2 or similar USB interface improves local sound, but it is optional. Music Priority can reduce video bandwidth when the internet connection is weak.</p>
       </div>
 
       <div style={{ marginTop: 24, padding: 18, borderRadius: 16, background: '#f3efe5' }}>
@@ -145,13 +152,26 @@ export default function AudioSetupPage() {
           <option value="">Default output</option>
           {outputs.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Audio output ${i + 1}`}</option>)}
         </select>
-        {!outputSupported && <span style={{ fontSize: 12, color: '#7a6653' }}>This browser does not allow websites to choose the output device. Select the Scarlett as the Mac/Windows system output instead.</span>}
+        {!outputSupported && <span style={{ fontSize: 12, color: '#7a6653' }}>This browser does not allow websites to choose the output device. Select the desired output in Mac/Windows settings instead.</span>}
       </div>
 
       <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 20, fontWeight: 900 }}>
         <input type="checkbox" checked={musicMode} onChange={e => setMusicMode(e.target.checked)} style={{ marginTop: 3 }} />
-        <span>Music Mode <small style={{ display: 'block', fontWeight: 500, lineHeight: 1.5, color: '#657067' }}>Disable echo cancellation, noise suppression and auto gain control for a more natural instrument/vocal signal.</small></span>
+        <span>Music Mode <small style={{ display: 'block', fontWeight: 500, lineHeight: 1.5, color: '#657067' }}>Disable speech processing for a more natural instrument/vocal signal.</small></span>
       </label>
+
+      <div style={{ marginTop: 24, padding: 18, borderRadius: 16, background: '#edf5ee', border: '1px solid #cbdccc' }}>
+        <div style={field}>
+          <label>Music Priority / Connection Quality</label>
+          <select style={selectStyle} value={connectionQuality} onChange={e => setConnectionQuality(e.target.value)}>
+            <option value="high">High Quality — strong internet</option>
+            <option value="balanced">Balanced — recommended</option>
+            <option value="low">Low Bandwidth — music priority</option>
+            <option value="audio">Audio Only — weakest connections</option>
+          </select>
+          <span style={{ fontSize: 13, lineHeight: 1.5, color: '#53645a', fontWeight: 600 }}>{QUALITY_HELP[connectionQuality]}</span>
+        </div>
+      </div>
 
       <div style={{ marginTop: 20 }}>
         <div style={{ height: 18, borderRadius: 999, overflow: 'hidden', background: '#e5dfd2' }}><div style={{ width: `${level}%`, height: '100%', background: level > 85 ? '#9c413b' : '#397454', transition: 'width 80ms linear' }} /></div>
@@ -161,13 +181,13 @@ export default function AudioSetupPage() {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 20 }}>
         <button type="button" style={secondary} onClick={() => loadDevices(true)}>Allow access / Refresh devices</button>
         <button type="button" style={secondary} onClick={testing ? stopTest : testInput}>{testing ? 'Stop input test' : 'Test selected input'}</button>
-        <button type="button" style={primary} onClick={save}>Save audio setup</button>
+        <button type="button" style={primary} onClick={save}>Save audio & connection setup</button>
       </div>
 
       <p role="status" style={{ marginTop: 18, padding: '12px 14px', borderRadius: 12, background: '#f7f4ec', lineHeight: 1.5 }}>{status}</p>
 
       <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e0d8c8', lineHeight: 1.6, color: '#657067' }}>
-        <b style={{ color: '#243129' }}>Scarlett 2i2 setup:</b> microphone or instrument → Scarlett input → USB to computer → wired headphones from Scarlett. Keep the computer on wired Ethernet where practical. The interface improves local audio quality and latency, but internet latency still depends on the connection between musicians.
+        <b style={{ color: '#243129' }}>Best setup:</b> microphone or instrument → USB audio interface (optional) → computer → wired headphones. Wired Ethernet is strongly preferred. Reducing video bandwidth can improve stability and reduce congestion, but it cannot remove the physical internet delay between musicians.
       </div>
 
       <div style={{ textAlign: 'center', marginTop: 22 }}><a href="/" style={{ color: '#77562d', fontWeight: 900 }}>← Back to Christian Jam Time</a></div>
