@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createRoom, roomExists, sanitizeParticipant } from '../../../../lib/rooms';
+import { verifyLeaderPin } from '../../../../lib/leaderPin';
 
 function apiError(error, status = 500) {
   const message = error?.code === 'REALTIME_NOT_CONFIGURED'
@@ -11,6 +12,10 @@ function apiError(error, status = 500) {
 export async function POST(request) {
   try {
     const body = await request.json();
+    if (!verifyLeaderPin(body.leaderPin)) {
+      return NextResponse.json({ ok: false, error: 'Incorrect leader PIN.' }, { status: 403 });
+    }
+
     const id = crypto.randomUUID();
     const participant = sanitizeParticipant({ id, name: body.name, instrument: body.instrument }, true);
 
