@@ -103,7 +103,7 @@ export default function HomePage() {
       }
     };
     refresh();
-    const poll = setInterval(refresh, 1500);
+    const poll = setInterval(refresh, 3000);
     return () => { stopped = true; clearInterval(poll); };
   }, [screen, room?.code, participantId]);
 
