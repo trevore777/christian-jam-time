@@ -8,6 +8,7 @@ import SongSuggestions from '../components/SongSuggestions';
 
 const NOTES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const INSTRUMENTS = ['Guitar', 'Bass', 'Piano', 'Drums', 'Vocals', 'Other'];
+const ACTIVE_LIMITS = [4, 6, 8, 10];
 
 function transpose(note, shift) {
   const i = NOTES.indexOf(note);
@@ -74,6 +75,10 @@ export default function HomePage() {
   const displayedKey = currentSong ? transpose(currentSong.key, shift) : '—';
   const leader = Boolean(room && participantId && room.leaderId === participantId);
   const participants = room?.participants || [];
+  const activeMusicians = participants.filter(person => person.isActiveMusician);
+  const me = participants.find(person => person.id === participantId);
+  const isActiveMusician = Boolean(me?.isActiveMusician);
+  const maxActiveMusicians = room?.maxActiveMusicians || 8;
 
   useEffect(() => {
     if (screen !== 'room' || !room?.code || !participantId) return;
@@ -111,7 +116,7 @@ export default function HomePage() {
   }, [screen, room?.code, participantId, name, instrument]);
 
   useEffect(() => {
-    if (screen !== 'room' || !room?.code || !participantId) return;
+    if (screen !== 'room' || !room?.code || !participantId || !isActiveMusician) return;
     let stopped = false;
     const syncMedia = async () => {
       if (stopped) return;
@@ -127,16 +132,14 @@ export default function HomePage() {
       mediaStatusRef.current = next;
       try {
         await fetch(`/api/rooms/${room.code}/media`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId, ...next }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId, ...next }),
         });
       } catch {}
     };
     syncMedia();
     const timer = setInterval(syncMedia, 800);
     return () => { stopped = true; clearInterval(timer); };
-  }, [screen, room?.code, participantId]);
+  }, [screen, room?.code, participantId, isActiveMusician]);
 
   async function createJam() {
     const leaderPin = window.prompt('Enter the 4-digit leader PIN:');
@@ -178,14 +181,11 @@ export default function HomePage() {
     setSyncStatus('Checking leader PIN…');
     try {
       const payload = await api(`/api/rooms/${room.code}/leader`, {
-        method: 'POST',
-        body: JSON.stringify({ participantId, leaderPin: leaderPin.trim() }),
+        method: 'POST', body: JSON.stringify({ participantId, leaderPin: leaderPin.trim() }),
       });
       setRoom(payload.room);
       setSyncStatus('Leader control enabled');
-    } catch (err) {
-      setSyncStatus(err.message);
-    }
+    } catch (err) { setSyncStatus(err.message); }
   }
 
   async function bootPerson(person) {
@@ -195,14 +195,36 @@ export default function HomePage() {
     setSyncStatus(`Removing ${person.name}…`);
     try {
       const payload = await api(`/api/rooms/${room.code}/boot`, {
-        method: 'POST',
-        body: JSON.stringify({ participantId, targetParticipantId: person.id }),
+        method: 'POST', body: JSON.stringify({ participantId, targetParticipantId: person.id }),
       });
       setRoom(payload.room);
       setSyncStatus(`${person.name} removed`);
-    } catch (err) {
-      setSyncStatus(err.message);
-    }
+    } catch (err) { setSyncStatus(err.message); }
+  }
+
+  async function setPerformanceMode(person, mode) {
+    if (!leader || !room?.code || !person?.id) return;
+    setSyncStatus(mode === 'musician' ? `Promoting ${person.name}…` : `Moving ${person.name} to Listener…`);
+    try {
+      const payload = await api(`/api/rooms/${room.code}/performance`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'set-mode', participantId, targetParticipantId: person.id, mode }),
+      });
+      setRoom(payload.room);
+      setSyncStatus(mode === 'musician' ? `${person.name} is now an active musician` : `${person.name} is now a listener`);
+    } catch (err) { setSyncStatus(err.message); }
+  }
+
+  async function setActiveLimit(limit) {
+    if (!leader || !room?.code) return;
+    setSyncStatus(`Setting active musician limit to ${limit}…`);
+    try {
+      const payload = await api(`/api/rooms/${room.code}/performance`, {
+        method: 'POST', body: JSON.stringify({ action: 'set-limit', participantId, limit }),
+      });
+      setRoom(payload.room);
+      setSyncStatus(`Active musician limit: ${limit}`);
+    } catch (err) { setSyncStatus(err.message); }
   }
 
   async function updateShared(updates) {
@@ -219,8 +241,7 @@ export default function HomePage() {
     setSyncStatus('Sending suggestion…');
     try {
       const payload = await api(`/api/rooms/${room.code}/suggestions`, {
-        method: 'POST',
-        body: JSON.stringify({ participantId, song }),
+        method: 'POST', body: JSON.stringify({ participantId, song }),
       });
       setRoom(payload.room);
       setSyncStatus('Suggested');
@@ -280,27 +301,32 @@ export default function HomePage() {
       <div className="profileFields"><label>Your name<input value={name} onChange={e => setName(e.target.value)} maxLength={40} /></label><label>Instrument<select value={instrument} onChange={e => setInstrument(e.target.value)}>{INSTRUMENTS.map(item => <option key={item}>{item}</option>)}</select></label></div>
       <div className="homeActions"><button className="primary large" onClick={createJam} disabled={busy || !songbookReady}>{busy ? 'Connecting…' : 'Start a Leader Jam'}</button><span>or</span><form className="joinForm" onSubmit={joinJam}><span style={{display:'flex',alignItems:'center',fontWeight:900,padding:'0 2px'}}>CJT-</span><input aria-label="Four digit Jam number" placeholder="4271" value={joinCode} onChange={e => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" pattern="[0-9]*" autoComplete="off" autoCorrect="off" spellCheck="false" maxLength={4} /><button className="secondary" type="submit" disabled={busy}>{busy ? 'Connecting…' : 'Join Jam'}</button></form></div>
       {error && <div className="homeError" role="alert">{error}</div>}
-      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Leader PIN</b><span>Leader control is protected while everyone else can join with the Jam code.</span></div></div>
+      <div className="featureStrip"><div><b>Shared Songbook</b><span>{songbookReady ? `${songs.length} songs loaded from the master list.` : 'Master songbook needs its one-time import.'}</span></div><div><b>Song Suggestions</b><span>Participants can suggest songs for the leader to approve.</span></div><div><b>Performance Protection</b><span>Up to 8 musicians use live media by default; extra participants join as listeners.</span></div></div>
       {!songbookReady && <SongbookImporter onImported={loadSongs} />}
     </section></main>;
   }
 
   return <main className="appShell">
-    <header className="topbar"><button className="brandButton" onClick={leaveRoom}><span>♪</span><b>Christian Jam Time</b></button><div className="roomBadge">Room <b>{room?.code}</b></div><div className="userBadge">{name || 'Guest'} · {instrument}{leader ? ' · Leader' : ''}</div></header>
-    <div className={`connectionBanner ${['Connected','Synced','Suggested','Added to playlist','Leader control enabled'].includes(syncStatus) ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <><b> · Following leader</b><button type="button" onClick={takeLeaderControl} style={{marginLeft:10,border:0,borderRadius:8,padding:'5px 9px',fontWeight:900,cursor:'pointer'}}>Leader Login</button></>}</div>
+    <header className="topbar"><button className="brandButton" onClick={leaveRoom}><span>♪</span><b>Christian Jam Time</b></button><div className="roomBadge">Room <b>{room?.code}</b></div><div className="userBadge">{name || 'Guest'} · {instrument}{leader ? ' · Leader' : isActiveMusician ? ' · Musician' : ' · Listener'}</div></header>
+    <div className={`connectionBanner ${['Connected','Synced','Suggested','Added to playlist','Leader control enabled'].includes(syncStatus) ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online · <b>{activeMusicians.length}/{maxActiveMusicians} active musicians</b> {!leader && <><b> · {isActiveMusician ? 'Live media enabled' : 'Listener mode'}</b><button type="button" onClick={takeLeaderControl} style={{marginLeft:10,border:0,borderRadius:8,padding:'5px 9px',fontWeight:900,cursor:'pointer'}}>Leader Login</button></>}</div>
     <div className="workspace">
       <aside className="sidebar">
-        <section className="card"><div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div><div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div style={{minWidth:0,flex:1}}><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : ''} · {person.micOn ? '🎙️' : '🔇'} {person.cameraOn ? '📹' : '🚫📹'}</span>{leader && !person.isLeader && <button type="button" onClick={() => bootPerson(person)} style={{marginTop:6,border:'1px solid #b98f82',borderRadius:7,padding:'4px 8px',background:'#fff5f2',color:'#7b342c',fontSize:11,fontWeight:900,cursor:'pointer'}}>Boot</button>}</div></div>)}</div><p className="hint">Share <b>{room?.code}</b> with friends. 🎙️ and 📹 show who is actively sending microphone and camera. Only one active participant per name is allowed.</p></section>
+        <section className="card">
+          <div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div>
+          {leader && <div style={{padding:'10px 12px',marginBottom:12,borderRadius:10,background:'#f3efe5'}}><b style={{fontSize:12}}>Active musician limit</b><div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:7}}>{ACTIVE_LIMITS.map(limit => <button key={limit} type="button" onClick={() => setActiveLimit(limit)} style={{border:limit === maxActiveMusicians ? '2px solid #2d6846' : '1px solid #cfc6b5',borderRadius:8,padding:'6px 10px',background:limit === maxActiveMusicians ? '#edf5ee' : '#fff',fontWeight:900,cursor:'pointer'}}>{limit}</button>)}</div><p style={{fontSize:11,margin:'8px 0 0',color:'#687269'}}>Reducing the limit automatically moves excess musicians to Listener mode.</p></div>}
+          <div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div style={{minWidth:0,flex:1}}><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : person.isActiveMusician ? ' · Musician' : ' · Listener'} {person.isActiveMusician ? `· ${person.micOn ? '🎙️' : '🔇'} ${person.cameraOn ? '📹' : '🚫📹'}` : '· 👂 media paused'}</span>{leader && !person.isLeader && <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:6}}>{person.isActiveMusician ? <button type="button" onClick={() => setPerformanceMode(person,'listener')} style={{border:'1px solid #c8b891',borderRadius:7,padding:'4px 8px',background:'#fffaf0',fontSize:11,fontWeight:900,cursor:'pointer'}}>Move to Listener</button> : <button type="button" onClick={() => setPerformanceMode(person,'musician')} style={{border:'1px solid #7da18a',borderRadius:7,padding:'4px 8px',background:'#f0f8f2',fontSize:11,fontWeight:900,cursor:'pointer'}}>Promote to Musician</button>}<button type="button" onClick={() => bootPerson(person)} style={{border:'1px solid #b98f82',borderRadius:7,padding:'4px 8px',background:'#fff5f2',color:'#7b342c',fontSize:11,fontWeight:900,cursor:'pointer'}}>Boot</button></div>}</div></div>)}</div>
+          <p className="hint">Active musicians use live WebRTC audio/video. Listeners can still follow the shared song, chords and suggestions without adding live-media load.</p>
+        </section>
         <section className="card songbookCard"><div className="sectionHeading"><div><small>MASTER SONGBOOK</small><h2>{leader ? 'Choose a song' : 'Suggest a song'}</h2></div><span>{songs.length} loaded</span></div><input className="searchInput" type="search" placeholder="Search title, first line, scripture or number" value={query} onChange={e => setQuery(e.target.value)} />{!leader && <p className="hint followerHint">Choose any song and press <b>Suggest</b>. The leader can then add it to tonight&apos;s playlist.</p>}<div className="songList">{filtered.map(song => <div className="songItem" key={song.number}><button className="songInfo" onClick={() => addSong(song)}><b>{song.number}. {song.title}</b><span>Key {song.key || '—'} · Page {(song.pages || []).join(', ') || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</span></button><button className="addButton" onClick={() => addSong(song)} aria-label={`${leader ? 'Add' : 'Suggest'} ${song.title}`}>{leader ? '+' : 'Suggest'}</button></div>)}</div></section>
         <SongSuggestions suggestions={suggestions} leader={leader} onResolve={resolveSuggestion} />
       </aside>
       <section className="mainColumn">
-        <LiveVideoPanel participants={participants} participantId={participantId} roomCode={room?.code || ''} />
+        {isActiveMusician ? <LiveVideoPanel participants={activeMusicians} participantId={participantId} roomCode={room?.code || ''} /> : <section className="card videoCard"><div className="sectionHeading"><div><small>PERFORMANCE PROTECTION</small><h2>Listener Mode</h2></div><span style={{fontWeight:900}}>👂</span></div><div style={{padding:'22px',borderRadius:14,background:'#f3efe5',textAlign:'center'}}><h3 style={{marginTop:0}}>Live camera and microphone are paused</h3><p style={{lineHeight:1.6,color:'#657067'}}>You can still follow the shared song, chord sheet, playlist and make song suggestions. The leader can promote you to an active musician when a live slot is available.</p><b>{activeMusicians.length}/{maxActiveMusicians} active musician slots currently in use</b></div></section>}
         <section className="card songStage">
           <div className="stageHeader"><div><small>NOW PLAYING</small><h2>{currentSong ? currentSong.title : 'Choose a song from the songbook'}</h2><p>{currentSong ? `Song ${currentSong.number} · Songbook page ${(currentSong.pages || []).join(', ') || '—'} · Original key ${currentSong.key || '—'}` : leader ? 'Build tonight’s playlist from the master song list.' : 'Waiting for the leader to choose the first song.'}</p></div><div className="keyControl"><span>Shared key</span><div><button onClick={() => currentSong && updateShared({ playlist, currentIndex, shift: shift - 1 })} disabled={!currentSong || !leader}>−</button><strong>{displayedKey}</strong><button onClick={() => currentSong && updateShared({ playlist, currentIndex, shift: shift + 1 })} disabled={!currentSong || !leader}>+</button></div></div></div>
           <div className="chordSheet"><ChordSheetEditor song={currentSong} shift={shift} canEdit={leader} onSave={saveCurrentSong} /></div>
           <div className="playlistHeader"><div><small>TONIGHT&apos;S PLAYLIST</small><h3>{playlist.length ? `${playlist.length} song${playlist.length === 1 ? '' : 's'}` : 'No songs yet'}</h3></div></div><div className="playlist">{playlist.map((song, index) => <div className={`playlistItem ${index === currentIndex ? 'active' : ''}`} key={`${song.number}-${index}`}><button className="playlistSelect" disabled={!leader} onClick={() => updateShared({ playlist, currentIndex: index, shift: 0 })}><span>{index + 1}</span><div><b>{song.title}</b><small>Key {song.key || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</small></div></button><button className="removeButton" disabled={!leader} onClick={() => removeSong(index)} aria-label={`Remove ${song.title}`}>×</button></div>)}</div>
-          <div className="transport"><button className="secondary" disabled={!leader || currentIndex <= 0} onClick={() => updateShared({ playlist, currentIndex: currentIndex - 1, shift: 0 })}>← Previous</button><div className="statusText">{leader ? 'You control the shared song and review participant suggestions.' : 'Suggest songs from the songbook; the leader controls the shared playlist.'}</div><button className="primary" disabled={!leader || currentIndex < 0 || currentIndex >= playlist.length - 1} onClick={() => updateShared({ playlist, currentIndex: currentIndex + 1, shift: 0 })}>Next Song →</button></div>
+          <div className="transport"><button className="secondary" disabled={!leader || currentIndex <= 0} onClick={() => updateShared({ playlist, currentIndex: currentIndex - 1, shift: 0 })}>← Previous</button><div className="statusText">{leader ? 'You control the shared song, active musician slots and participant suggestions.' : isActiveMusician ? 'You are an active musician in this Jam.' : 'Listener mode protects the live musicians from extra media load.'}</div><button className="primary" disabled={!leader || currentIndex < 0 || currentIndex >= playlist.length - 1} onClick={() => updateShared({ playlist, currentIndex: currentIndex + 1, shift: 0 })}>Next Song →</button></div>
         </section>
       </section>
     </div>
