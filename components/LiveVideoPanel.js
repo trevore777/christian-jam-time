@@ -80,6 +80,8 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   const pendingCandidatesRef = useRef(new Map());
   const negotiatingRef = useRef(new Set());
   const statsPreviousRef = useRef(new Map());
+  const signalSocketRef = useRef(null);
+  const signalSocketReadyRef = useRef(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
   const [mediaError, setMediaError] = useState('');
@@ -138,6 +140,13 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
 
   async function sendSignal(to, signal) {
     if (!roomCode || !participantId || !to) return;
+
+    const socket = signalSocketRef.current;
+    if (socket && signalSocketReadyRef.current && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'signal', to, signal }));
+      return;
+    }
+
     const response = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/signal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -278,24 +287,80 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
 
   useEffect(() => {
     if (!participantId || !roomCode || !me?.isActiveMusician) return;
-    let stopped = false;
-    let timer = null;
 
-    const pollSignals = async () => {
-      if (stopped) return;
+    let stopped = false;
+    let fallbackTimer = null;
+    let reconnectTimer = null;
+
+    const pollOnce = async () => {
+      if (stopped || signalSocketReadyRef.current) return;
       try {
         const response = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/signal?participantId=${encodeURIComponent(participantId)}`, { cache: 'no-store' });
         const payload = await response.json();
         for (const message of payload.signals || []) await handleSignal(message);
       } catch {}
 
-      if (stopped) return;
-      const allConnected = others.length > 0 && others.every(person => peersRef.current.get(person.id)?.connectionState === 'connected');
-      timer = setTimeout(pollSignals, allConnected ? 4000 : 1000);
+      if (!stopped && !signalSocketReadyRef.current) {
+        fallbackTimer = setTimeout(pollOnce, 2000);
+      }
     };
 
-    pollSignals();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    const connectSocket = () => {
+      if (stopped) return;
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(roomCode)}&participantId=${encodeURIComponent(participantId)}`;
+      const socket = new WebSocket(url);
+      signalSocketRef.current = socket;
+
+      socket.onopen = () => {
+        signalSocketReadyRef.current = true;
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+      };
+
+      socket.onmessage = event => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'signal') handleSignal(message).catch(() => {});
+        } catch {}
+      };
+
+      socket.onerror = () => {
+        signalSocketReadyRef.current = false;
+      };
+
+      socket.onclose = () => {
+        if (signalSocketRef.current === socket) signalSocketRef.current = null;
+        signalSocketReadyRef.current = false;
+
+        if (!stopped) {
+          if (!fallbackTimer) pollOnce();
+          reconnectTimer = setTimeout(connectSocket, 3000);
+        }
+      };
+    };
+
+    connectSocket();
+
+    const socketFallback = setTimeout(() => {
+      if (!signalSocketReadyRef.current) pollOnce();
+    }, 1500);
+
+    return () => {
+      stopped = true;
+      clearTimeout(socketFallback);
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+
+      signalSocketReadyRef.current = false;
+
+      const socket = signalSocketRef.current;
+      signalSocketRef.current = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+    };
   }, [participantId, roomCode, me?.isActiveMusician, others.map(person => person.id).join('|')]);
 
   useEffect(() => {
