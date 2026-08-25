@@ -277,8 +277,10 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   }
 
   useEffect(() => {
-    if (!participantId || !roomCode) return;
+    if (!participantId || !roomCode || !me?.isActiveMusician) return;
     let stopped = false;
+    let timer = null;
+
     const pollSignals = async () => {
       if (stopped) return;
       try {
@@ -286,11 +288,15 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
         const payload = await response.json();
         for (const message of payload.signals || []) await handleSignal(message);
       } catch {}
+
+      if (stopped) return;
+      const allConnected = others.length > 0 && others.every(person => peersRef.current.get(person.id)?.connectionState === 'connected');
+      timer = setTimeout(pollSignals, allConnected ? 4000 : 1000);
     };
+
     pollSignals();
-    const timer = setInterval(pollSignals, 700);
-    return () => { stopped = true; clearInterval(timer); };
-  }, [participantId, roomCode]);
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [participantId, roomCode, me?.isActiveMusician, others.map(person => person.id).join('|')]);
 
   useEffect(() => {
     const activeIds = new Set(others.map(person => person.id));
