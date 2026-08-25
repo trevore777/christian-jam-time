@@ -39,6 +39,7 @@ export default function HomePage() {
   const [error, setError] = useState('');
   const [syncStatus, setSyncStatus] = useState('Connected');
   const mounted = useRef(true);
+  const mediaStatusRef = useRef({ micOn: false, cameraOn: false });
 
   useEffect(() => () => { mounted.current = false; }, []);
 
@@ -80,7 +81,18 @@ export default function HomePage() {
     const refresh = async () => {
       try {
         const payload = await api(`/api/rooms/${room.code}`);
-        if (!stopped && mounted.current) { setRoom(payload.room); setSyncStatus('Connected'); }
+        if (stopped || !mounted.current) return;
+        const stillHere = (payload.room?.participants || []).some(person => person.id === participantId);
+        if (!stillHere) {
+          setScreen('home');
+          setRoom(null);
+          setParticipantId('');
+          setJoinCode('');
+          setError('You have been removed from this Jam by the leader.');
+          return;
+        }
+        setRoom(payload.room);
+        setSyncStatus('Connected');
       } catch (err) {
         if (!stopped && mounted.current) setSyncStatus(err.message || 'Reconnecting…');
       }
@@ -97,6 +109,34 @@ export default function HomePage() {
     }).catch(() => {});
     beat(); const timer = setInterval(beat, 10_000); return () => clearInterval(timer);
   }, [screen, room?.code, participantId, name, instrument]);
+
+  useEffect(() => {
+    if (screen !== 'room' || !room?.code || !participantId) return;
+    let stopped = false;
+    const syncMedia = async () => {
+      if (stopped) return;
+      const card = document.querySelector('.videoCard');
+      if (!card) return;
+      const buttonText = Array.from(card.querySelectorAll('button')).map(button => button.textContent || '');
+      const next = {
+        cameraOn: buttonText.some(text => text.trim() === 'Camera On'),
+        micOn: buttonText.some(text => text.trim() === 'Mic On'),
+      };
+      const previous = mediaStatusRef.current;
+      if (next.cameraOn === previous.cameraOn && next.micOn === previous.micOn) return;
+      mediaStatusRef.current = next;
+      try {
+        await fetch(`/api/rooms/${room.code}/media`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ participantId, ...next }),
+        });
+      } catch {}
+    };
+    syncMedia();
+    const timer = setInterval(syncMedia, 800);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [screen, room?.code, participantId]);
 
   async function createJam() {
     const leaderPin = window.prompt('Enter the 4-digit leader PIN:');
@@ -148,6 +188,23 @@ export default function HomePage() {
     }
   }
 
+  async function bootPerson(person) {
+    if (!leader || !room?.code || !person?.id || person.id === participantId) return;
+    const confirmed = window.confirm(`Remove ${person.name} from this Jam? They will not be able to rejoin this session using the same name.`);
+    if (!confirmed) return;
+    setSyncStatus(`Removing ${person.name}…`);
+    try {
+      const payload = await api(`/api/rooms/${room.code}/boot`, {
+        method: 'POST',
+        body: JSON.stringify({ participantId, targetParticipantId: person.id }),
+      });
+      setRoom(payload.room);
+      setSyncStatus(`${person.name} removed`);
+    } catch (err) {
+      setSyncStatus(err.message);
+    }
+  }
+
   async function updateShared(updates) {
     if (!leader || !room?.code) return;
     setSyncStatus('Saving…');
@@ -167,9 +224,7 @@ export default function HomePage() {
       });
       setRoom(payload.room);
       setSyncStatus('Suggested');
-    } catch (err) {
-      setSyncStatus(err.message);
-    }
+    } catch (err) { setSyncStatus(err.message); }
   }
 
   async function resolveSuggestion(suggestionId, action) {
@@ -177,14 +232,11 @@ export default function HomePage() {
     setSyncStatus(action === 'approve' ? 'Adding suggestion…' : 'Dismissing suggestion…');
     try {
       const payload = await api(`/api/rooms/${room.code}/suggestions`, {
-        method: 'PATCH',
-        body: JSON.stringify({ participantId, suggestionId, action }),
+        method: 'PATCH', body: JSON.stringify({ participantId, suggestionId, action }),
       });
       setRoom(payload.room);
       setSyncStatus(action === 'approve' ? 'Added to playlist' : 'Suggestion dismissed');
-    } catch (err) {
-      setSyncStatus(err.message);
-    }
+    } catch (err) { setSyncStatus(err.message); }
   }
 
   function addSong(song) {
@@ -218,6 +270,7 @@ export default function HomePage() {
 
   function leaveRoom() {
     setScreen('home'); setRoom(null); setParticipantId(''); setJoinCode(''); setSyncStatus('Connected');
+    mediaStatusRef.current = { micOn: false, cameraOn: false };
   }
 
   if (screen === 'home') {
@@ -234,10 +287,10 @@ export default function HomePage() {
 
   return <main className="appShell">
     <header className="topbar"><button className="brandButton" onClick={leaveRoom}><span>♪</span><b>Christian Jam Time</b></button><div className="roomBadge">Room <b>{room?.code}</b></div><div className="userBadge">{name || 'Guest'} · {instrument}{leader ? ' · Leader' : ''}</div></header>
-    <div className={`connectionBanner ${syncStatus === 'Connected' || syncStatus === 'Synced' || syncStatus === 'Suggested' || syncStatus === 'Added to playlist' || syncStatus === 'Leader control enabled' ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <><b> · Following leader</b><button type="button" onClick={takeLeaderControl} style={{marginLeft:10,border:0,borderRadius:8,padding:'5px 9px',fontWeight:900,cursor:'pointer'}}>Leader Login</button></>}</div>
+    <div className={`connectionBanner ${['Connected','Synced','Suggested','Added to playlist','Leader control enabled'].includes(syncStatus) ? 'online' : ''}`}><span>●</span> {syncStatus} · {participants.length} online {!leader && <><b> · Following leader</b><button type="button" onClick={takeLeaderControl} style={{marginLeft:10,border:0,borderRadius:8,padding:'5px 9px',fontWeight:900,cursor:'pointer'}}>Leader Login</button></>}</div>
     <div className="workspace">
       <aside className="sidebar">
-        <section className="card"><div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div><div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : ''}</span></div></div>)}</div><p className="hint">Share <b>{room?.code}</b> with friends. Everyone sees the leader&apos;s song, key and saved chord-sheet changes.</p></section>
+        <section className="card"><div className="sectionHeading"><div><small>PEOPLE</small><h2>Jam Room</h2></div><span className="liveDot">● LIVE</span></div><div className="peopleGrid">{participants.map(person => <div className={`personCard ${person.isLeader ? 'leaderCard' : ''}`} key={person.id}><div className="avatar">{(person.name || '?')[0].toUpperCase()}</div><div style={{minWidth:0,flex:1}}><b>{person.name}</b><span>{person.instrument}{person.isLeader ? ' · Leader' : ''} · {person.micOn ? '🎙️' : '🔇'} {person.cameraOn ? '📹' : '🚫📹'}</span>{leader && !person.isLeader && <button type="button" onClick={() => bootPerson(person)} style={{marginTop:6,border:'1px solid #b98f82',borderRadius:7,padding:'4px 8px',background:'#fff5f2',color:'#7b342c',fontSize:11,fontWeight:900,cursor:'pointer'}}>Boot</button>}</div></div>)}</div><p className="hint">Share <b>{room?.code}</b> with friends. 🎙️ and 📹 show who is actively sending microphone and camera. Only one active participant per name is allowed.</p></section>
         <section className="card songbookCard"><div className="sectionHeading"><div><small>MASTER SONGBOOK</small><h2>{leader ? 'Choose a song' : 'Suggest a song'}</h2></div><span>{songs.length} loaded</span></div><input className="searchInput" type="search" placeholder="Search title, first line, scripture or number" value={query} onChange={e => setQuery(e.target.value)} />{!leader && <p className="hint followerHint">Choose any song and press <b>Suggest</b>. The leader can then add it to tonight&apos;s playlist.</p>}<div className="songList">{filtered.map(song => <div className="songItem" key={song.number}><button className="songInfo" onClick={() => addSong(song)}><b>{song.number}. {song.title}</b><span>Key {song.key || '—'} · Page {(song.pages || []).join(', ') || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</span></button><button className="addButton" onClick={() => addSong(song)} aria-label={`${leader ? 'Add' : 'Suggest'} ${song.title}`}>{leader ? '+' : 'Suggest'}</button></div>)}</div></section>
         <SongSuggestions suggestions={suggestions} leader={leader} onResolve={resolveSuggestion} />
       </aside>
