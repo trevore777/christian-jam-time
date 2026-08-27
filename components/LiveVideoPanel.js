@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 
 const AUDIO_SETTINGS_KEY = 'cjtAudioSettings';
 const defaultAudioSettings = { inputDeviceId: '', outputDeviceId: '', musicMode: true, connectionQuality: 'balanced' };
+const DEFAULT_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
 const QUALITY = {
   high: { label: 'High Quality', width: 1280, height: 720, fps: 30, maxBitrate: 1800000 },
   balanced: { label: 'Balanced', width: 854, height: 480, fps: 24, maxBitrate: 850000 },
@@ -79,6 +83,9 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   const statsPreviousRef = useRef(new Map());
   const signalSocketRef = useRef(null);
   const signalSocketReadyRef = useRef(false);
+  const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
+  const [iceReady, setIceReady] = useState(false);
+  const [turnAvailable, setTurnAvailable] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
   const [mediaError, setMediaError] = useState('');
@@ -87,6 +94,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   const [audioSettings, setAudioSettings] = useState(defaultAudioSettings);
   const [networkQuality, setNetworkQuality] = useState('Checking…');
   const [networkDetail, setNetworkDetail] = useState('');
+  const [connectionRoute, setConnectionRoute] = useState('');
 
   const me = participants.find(person => person.id === participantId);
   const others = participants.filter(person => person.id !== participantId);
@@ -102,6 +110,34 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
       window.removeEventListener('storage', refresh);
     };
   }, []);
+
+  useEffect(() => {
+    if (!roomCode || !participantId) {
+      setIceReady(false);
+      return;
+    }
+    let stopped = false;
+    setIceReady(false);
+    setTurnAvailable(false);
+    const loadIceServers = async () => {
+      try {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/turn?participantId=${encodeURIComponent(participantId)}`, { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !Array.isArray(payload.iceServers)) throw new Error(payload.error || 'TURN unavailable');
+        if (stopped) return;
+        iceServersRef.current = [...DEFAULT_ICE_SERVERS, ...payload.iceServers];
+        setTurnAvailable(payload.iceServers.some(server => String(Array.isArray(server.urls) ? server.urls.join(' ') : server.urls || '').includes('turn:')));
+      } catch {
+        if (stopped) return;
+        iceServersRef.current = DEFAULT_ICE_SERVERS;
+        setTurnAvailable(false);
+      } finally {
+        if (!stopped) setIceReady(true);
+      }
+    };
+    loadIceServers();
+    return () => { stopped = true; };
+  }, [roomCode, participantId]);
 
   async function sendSignal(to, signal) {
     if (!roomCode || !participantId || !to) return;
@@ -150,12 +186,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   function makePeer(peerId) {
     const existing = peersRef.current.get(peerId);
     if (existing && existing.connectionState !== 'closed') return existing;
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
-    });
+    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
     peersRef.current.set(peerId, pc);
     pendingCandidatesRef.current.set(peerId, []);
     setConnectionStates(prev => ({ ...prev, [peerId]: 'connecting' }));
@@ -193,7 +224,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   }
 
   async function createOffer(peerId) {
-    if (!canBroadcast || negotiatingRef.current.has(peerId)) return;
+    if (!canBroadcast || !iceReady || negotiatingRef.current.has(peerId)) return;
     negotiatingRef.current.add(peerId);
     try {
       const pc = makePeer(peerId);
@@ -219,6 +250,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   }
 
   async function handleSignal(message) {
+    if (!iceReady) return;
     const peerId = message.from;
     if (!peerId || peerId === participantId) return;
     const signal = message.signal || {};
@@ -246,7 +278,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
   }
 
   useEffect(() => {
-    if (!participantId || !roomCode) return;
+    if (!participantId || !roomCode || !iceReady) return;
     let stopped = false;
     let fallbackTimer = null;
     let reconnectTimer = null;
@@ -306,14 +338,14 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
       signalSocketRef.current = null;
       if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
     };
-  }, [participantId, roomCode, canBroadcast, songLeaderId]);
+  }, [participantId, roomCode, canBroadcast, songLeaderId, iceReady]);
 
   useEffect(() => {
     const validIds = new Set(others.map(person => person.id));
     for (const peerId of peersRef.current.keys()) if (!validIds.has(peerId)) closePeer(peerId);
-    if (!canBroadcast || !streamRef.current) return;
+    if (!canBroadcast || !streamRef.current || !iceReady) return;
     for (const person of others) createOffer(person.id).catch(() => {});
-  }, [participants.map(person => person.id).join('|'), canBroadcast, participantId]);
+  }, [participants.map(person => person.id).join('|'), canBroadcast, participantId, iceReady]);
 
   useEffect(() => {
     if (canBroadcast) return;
@@ -328,6 +360,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
     if (!participantId || !roomCode) return;
     const readStats = async () => {
       const samples = [];
+      let usedRelay = false;
       for (const [peerId, pc] of peersRef.current.entries()) {
         if (pc.connectionState !== 'connected') continue;
         try {
@@ -341,6 +374,9 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
             }
             if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime != null) {
               rtt = Math.max(rtt, Number(report.currentRoundTripTime || 0));
+              const local = reports.get(report.localCandidateId);
+              const remote = reports.get(report.remoteCandidateId);
+              if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') usedRelay = true;
             }
           });
           const previous = statsPreviousRef.current.get(peerId);
@@ -358,16 +394,18 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
       if (!samples.length) {
         setNetworkQuality(others.length ? 'Connecting…' : 'Ready');
         setNetworkDetail('');
+        setConnectionRoute(turnAvailable ? 'TURN available' : 'Direct only');
         return;
       }
       const worst = samples.reduce((a, b) => ({ packetLoss: Math.max(a.packetLoss, b.packetLoss), rtt: Math.max(a.rtt, b.rtt), jitter: Math.max(a.jitter, b.jitter) }), { packetLoss: 0, rtt: 0, jitter: 0 });
       setNetworkQuality(qualityFromStats(worst));
       setNetworkDetail(`${worst.packetLoss.toFixed(1)}% loss · ${Math.round(worst.rtt * 1000)} ms RTT · ${Math.round(worst.jitter * 1000)} ms jitter`);
+      setConnectionRoute(usedRelay ? 'TURN relay' : 'Direct');
     };
     readStats();
     const timer = setInterval(readStats, 4000);
     return () => clearInterval(timer);
-  }, [participantId, roomCode, others.length]);
+  }, [participantId, roomCode, others.length, turnAvailable]);
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach(track => track.stop());
@@ -471,7 +509,7 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         {canBroadcast && audioSettings.musicMode && <div style={{ padding: '9px 12px', borderRadius: 10, background: '#edf5ee', color: '#315d3f', fontSize: 12, fontWeight: 800 }}>Music Mode</div>}
         <div style={{ padding: '9px 12px', borderRadius: 10, background: '#eef0f3', color: '#33414b', fontSize: 12, fontWeight: 800 }}>Music Priority: {mode.label}</div>
-        <div style={{ padding: '9px 12px', borderRadius: 10, background: '#edf5ee', color: '#315d3f', fontSize: 12, fontWeight: 800 }}>Connection: {networkQuality}{networkDetail ? ` · ${networkDetail}` : ''}</div>
+        <div style={{ padding: '9px 12px', borderRadius: 10, background: '#edf5ee', color: '#315d3f', fontSize: 12, fontWeight: 800 }}>Connection: {networkQuality}{networkDetail ? ` · ${networkDetail}` : ''}{connectionRoute ? ` · ${connectionRoute}` : ''}</div>
       </div>
 
       {mediaError && <div role="alert" style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: '#f7e9e6', color: '#74352f' }}>{mediaError}</div>}
@@ -488,11 +526,11 @@ export default function LiveVideoPanel({ participants = [], participantId = '', 
           <RemoteVideo stream={remoteSongLeaderStream} outputDeviceId={audioSettings.outputDeviceId} />
           {!remoteSongLeaderStream && <div className="videoInitial">{(songLeader?.name || '?')[0].toUpperCase()}</div>}
           <span style={{ zIndex: 2 }}>{songLeader?.name || 'Song Leader'} · {songLeader?.instrument || ''} · Song Leader</span>
-          <div style={{ position: 'absolute', right: 8, top: 8, zIndex: 2 }}><b style={badge}>{remoteSongLeaderStream ? 'Connected' : songLeaderState === 'failed' ? 'Connection failed' : 'Connecting…'}</b></div>
+          <div style={{ position: 'absolute', right: 8, top: 8, zIndex: 2 }}><b style={badge}>{remoteSongLeaderStream ? 'Connected' : !iceReady ? 'Preparing secure relay…' : songLeaderState === 'failed' ? 'Connection failed' : 'Connecting…'}</b></div>
         </div>}
       </div>
 
-      <p className="hint">Only the selected Song Leader can broadcast microphone and camera. Everyone else follows with their own mic and camera off. This greatly reduces live-media load. Mobile networks may still require a TURN relay for reliable connections.</p>
+      <p className="hint">Only the selected Song Leader can broadcast microphone and camera. Everyone else follows with their own mic and camera off. Direct connections are preferred; the AWS TURN relay is used automatically when mobile or restricted networks cannot connect directly.</p>
     </section>
   );
 }
