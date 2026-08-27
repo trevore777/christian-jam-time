@@ -25,7 +25,7 @@ export default function AudioSetupPage() {
   const [outputDeviceId, setOutputDeviceId] = useState('');
   const [musicMode, setMusicMode] = useState(true);
   const [connectionQuality, setConnectionQuality] = useState('balanced');
-  const [status, setStatus] = useState('Connect your USB interface, then allow microphone access.');
+  const [status, setStatus] = useState('Choose how you are connecting your microphone, then allow microphone access.');
   const [level, setLevel] = useState(0);
   const [testing, setTesting] = useState(false);
   const streamRef = useRef(null);
@@ -51,9 +51,9 @@ export default function AudioSetupPage() {
       setInputs(devices.filter(d => d.kind === 'audioinput'));
       setOutputs(devices.filter(d => d.kind === 'audiooutput'));
       permissionStream?.getTracks().forEach(track => track.stop());
-      setStatus('Audio devices detected. Choose your interface and test the input.');
+      setStatus('Audio devices detected. Choose your input and test the level.');
     } catch (error) {
-      setStatus(error?.name === 'NotAllowedError' ? 'Microphone permission was blocked. Allow microphone access in Chrome and try again.' : 'Could not read the available audio devices.');
+      setStatus(error?.name === 'NotAllowedError' ? 'Microphone permission was blocked. Allow microphone access in your browser and try again.' : 'Could not read the available audio devices.');
     }
   }
 
@@ -109,17 +109,17 @@ export default function AudioSetupPage() {
       draw();
       setTesting(true);
       const track = stream.getAudioTracks()[0];
-      setStatus(`Input test running: ${track?.label || 'selected audio input'}. Play or sing and watch the meter.`);
+      setStatus(`Input test running: ${track?.label || 'selected audio input'}. Speak, sing or play and watch the meter.`);
       await loadDevices(false);
     } catch (error) {
-      setStatus(error?.name === 'OverconstrainedError' ? 'That saved interface is no longer available. Choose another input.' : 'Could not start the selected audio input. Check the cable and microphone permission.');
+      setStatus(error?.name === 'OverconstrainedError' ? 'That saved audio input is no longer available. Choose another input.' : 'Could not start the selected audio input. Check the connection and microphone permission.');
     }
   }
 
   function save() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ inputDeviceId, outputDeviceId, musicMode, connectionQuality }));
     window.dispatchEvent(new Event('cjt-audio-settings-changed'));
-    setStatus('Saved. Christian Jam Time will use these audio and connection settings in the Live Jam.');
+    setStatus(`Saved. Christian Jam Time will use ${musicMode ? 'Audio Interface / Scarlett mode' : 'Phone / Built-in Mic mode'} in the Live Jam.`);
   }
 
   const outputSupported = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
@@ -130,16 +130,26 @@ export default function AudioSetupPage() {
         <div style={{ fontSize: 40 }}>🎚️</div>
         <p style={{ margin: '4px 0', fontSize: 12, fontWeight: 900, letterSpacing: '.14em', color: '#69746b' }}>MUSICIAN AUDIO SETUP</p>
         <h1 style={{ margin: '6px 0 10px', fontSize: 'clamp(32px,6vw,54px)' }}>Set up your audio & connection</h1>
-        <p style={{ maxWidth: 680, margin: '0 auto', lineHeight: 1.6, color: '#657067' }}>A Scarlett 2i2 or similar USB interface improves local sound, but it is optional. Music Priority can reduce video bandwidth when the internet connection is weak.</p>
+        <p style={{ maxWidth: 680, margin: '0 auto', lineHeight: 1.6, color: '#657067' }}>Choose the microphone setup you are actually using. Phone mode boosts and cleans a built-in microphone; Interface mode preserves the natural signal from a Scarlett or similar USB audio interface.</p>
       </div>
 
       <div style={{ marginTop: 24, padding: 18, borderRadius: 16, background: '#f3efe5' }}>
-        <b>Recommended for instruments and singing</b>
-        <p style={{ marginBottom: 0, lineHeight: 1.55, color: '#657067' }}>Music Mode turns off browser echo cancellation, noise suppression and automatic gain control. Those features are useful for speech calls but can pump, gate or distort musical audio.</p>
+        <div style={field}>
+          <label>Microphone setup</label>
+          <select style={selectStyle} value={musicMode ? 'interface' : 'phone'} onChange={e => setMusicMode(e.target.value === 'interface')}>
+            <option value="phone">Phone / Built-in Mic — louder, automatic processing</option>
+            <option value="interface">Audio Interface / Scarlett — natural music signal</option>
+          </select>
+          <span style={{ fontSize: 13, lineHeight: 1.55, color: '#657067', fontWeight: 600 }}>
+            {musicMode
+              ? 'Interface mode uses stereo where available and turns off automatic gain, echo cancellation and noise suppression so instruments and vocals are not gated or pumped.'
+              : 'Phone mode uses mono and turns on automatic gain, echo cancellation and noise suppression. This is the recommended setting when the built-in phone, tablet or laptop microphone sounds too quiet.'}
+          </span>
+        </div>
       </div>
 
       <div style={field}>
-        <label>Audio input / USB interface</label>
+        <label>Audio input</label>
         <select style={selectStyle} value={inputDeviceId} onChange={e => setInputDeviceId(e.target.value)}>
           <option value="">Default microphone</option>
           {inputs.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Audio input ${i + 1}`}</option>)}
@@ -152,13 +162,8 @@ export default function AudioSetupPage() {
           <option value="">Default output</option>
           {outputs.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Audio output ${i + 1}`}</option>)}
         </select>
-        {!outputSupported && <span style={{ fontSize: 12, color: '#7a6653' }}>This browser does not allow websites to choose the output device. Select the desired output in Mac/Windows settings instead.</span>}
+        {!outputSupported && <span style={{ fontSize: 12, color: '#7a6653' }}>This browser does not allow websites to choose the output device. Select the desired output in the device settings instead.</span>}
       </div>
-
-      <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 20, fontWeight: 900 }}>
-        <input type="checkbox" checked={musicMode} onChange={e => setMusicMode(e.target.checked)} style={{ marginTop: 3 }} />
-        <span>Music Mode <small style={{ display: 'block', fontWeight: 500, lineHeight: 1.5, color: '#657067' }}>Disable speech processing for a more natural instrument/vocal signal.</small></span>
-      </label>
 
       <div style={{ marginTop: 24, padding: 18, borderRadius: 16, background: '#edf5ee', border: '1px solid #cbdccc' }}>
         <div style={field}>
@@ -187,7 +192,7 @@ export default function AudioSetupPage() {
       <p role="status" style={{ marginTop: 18, padding: '12px 14px', borderRadius: 12, background: '#f7f4ec', lineHeight: 1.5 }}>{status}</p>
 
       <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid #e0d8c8', lineHeight: 1.6, color: '#657067' }}>
-        <b style={{ color: '#243129' }}>Best setup:</b> microphone or instrument → USB audio interface (optional) → computer → wired headphones. Wired Ethernet is strongly preferred. Reducing video bandwidth can improve stability and reduce congestion, but it cannot remove the physical internet delay between musicians.
+        <b style={{ color: '#243129' }}>Best setup:</b> microphone or instrument → USB audio interface (optional) → computer → wired headphones. Wired Ethernet is strongly preferred. TURN improves connection reliability on restrictive networks, while the microphone mode controls the audio processing used on the Song Leader's device.
       </div>
 
       <div style={{ textAlign: 'center', marginTop: 22 }}><a href="/" style={{ color: '#77562d', fontWeight: 900 }}>← Back to Christian Jam Time</a></div>
