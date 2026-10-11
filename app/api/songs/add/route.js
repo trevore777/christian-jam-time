@@ -14,11 +14,8 @@ export async function POST(request) {
     if (!title) return NextResponse.json({ ok: false, error: 'A song title is required.' }, { status: 400 });
     const songs = await getMasterSongbook();
     if (!songs) return NextResponse.json({ ok: false, error: 'Master songbook is not available.' }, { status: 503 });
-    // Redis-backed ID allocation prevents duplicates from simultaneous leader requests.
     const { redis } = await import('../../../lib/redis');
-    const highest = Math.max(0, ...songs.map(song => Number(song.number) || 0));
-    const next = await redis(['INCR', 'cjt:songbook:next-number:v1']);
-    const number = highest + Number(next);
+    const number = 0;
     const song = {
       id: 'custom-' + number, number, title,
       firstLine: '', key: String(body.key || '').slice(0, 12),
