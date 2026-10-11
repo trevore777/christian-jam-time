@@ -44,6 +44,7 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
   const [showOnly, setShowOnly] = useState(false);
   const [records, setRecords] = useState([]);
   const [recording, setRecording] = useState(false);
+  const [refresh, setRefresh] = useState(0);
   const [message, setMessage] = useState('');
   const [newSong, setNewSong] = useState(false);
   const [title, setTitle] = useState('');
@@ -70,7 +71,7 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
       setPlayable(withUrls);
     }).catch(err => setMessage(err.message));
     return () => { disposed = true; };
-  }, [selectedSong?.number, recording]);
+  }, [selectedSong?.number, refresh]);
   useEffect(() => () => {
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
     streamRef.current?.getTracks().forEach(track => track.stop());
@@ -102,6 +103,7 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
           } catch (error) { setMessage('Could not save recording: ' + error.message); }
         }
         setRecording(false);
+        setRefresh(v => v + 1);
       };
       recorder.start(1000);
       setRecording(true);
@@ -111,7 +113,7 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
   async function removeRecord(item) {
     if (!window.confirm('Delete this recording from this device?')) return;
     await writeRecord(item, true);
-    setRecording(value => !value);
+    setRefresh(v => v + 1);
   }
   async function saveSong(event) {
     event.preventDefault();
