@@ -5,6 +5,7 @@ import LiveVideoPanel from '../components/LiveVideoPanel';
 import ChordSheetEditor from '../components/ChordSheetEditor';
 import SongbookImporter from '../components/SongbookImporter';
 import SongSuggestions from '../components/SongSuggestions';
+import PracticeLibrary from '../components/PracticeLibrary';
 
 const NOTES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const INSTRUMENTS = ['Guitar', 'Bass', 'Piano', 'Drums', 'Vocals', 'Other'];
@@ -285,6 +286,16 @@ export default function HomePage() {
     await updateShared({ playlist: nextPlaylist, currentIndex, shift: 0 });
   }
 
+  async function createMasterSong(song) {
+    if (!leader || !room?.code) throw new Error('Only the Jam leader can add songs.');
+    const payload = await api('/api/songs/add', {
+      method: 'POST',
+      body: JSON.stringify({ ...song, roomCode: room.code, participantId }),
+    });
+    await loadSongs();
+    return payload.song;
+  }
+
   function leaveRoom() {
     setScreen('home');
     setRoom(null);
@@ -324,6 +335,7 @@ export default function HomePage() {
         </section>
 
         <section className="card songbookCard"><div className="sectionHeading"><div><small>MASTER SONGBOOK</small><h2>{leader ? 'Choose a song' : 'Suggest a song'}</h2></div><span>{songs.length} loaded</span></div><input className="searchInput" type="search" placeholder="Search title, first line, scripture or number" value={query} onChange={e => setQuery(e.target.value)} />{!leader && <p className="hint followerHint">Choose any song and press <b>Suggest</b>. The Jam Leader can add it and then make you the Song Leader.</p>}<div className="songList">{filtered.map(song => <div className="songItem" key={song.number}><button className="songInfo" onClick={() => addSong(song)}><b>{song.number}. {song.title}</b><span>Key {song.key || '—'} · Page {(song.pages || []).join(', ') || '—'} {song.lyricsChordPro ? '· Chords ✓' : ''}</span></button><button className="addButton" onClick={() => addSong(song)} aria-label={`${leader ? 'Add' : 'Suggest'} ${song.title}`}>{leader ? '+' : 'Suggest'}</button></div>)}</div></section>
+        <PracticeLibrary songs={songs} selectedSong={currentSong} canAddSong={leader} onAddSong={createMasterSong} />
         <SongSuggestions suggestions={suggestions} leader={leader} onResolve={resolveSuggestion} />
       </aside>
 
