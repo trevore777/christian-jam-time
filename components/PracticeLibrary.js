@@ -40,7 +40,10 @@ async function writeRecord(record, remove = false) {
 }
 function formatDate(iso) { return new Date(iso).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }); }
 export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAddSong }) {
-  const [favourites, setFavourites] = useState([]);
+  const [favourites, setFavourites] = useState(() => {
+    if (typeof window === 'undefined') return [];
+    try { const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'); return Array.isArray(saved) ? saved.filter(Number.isFinite) : []; } catch { return []; }
+  });
   const [showOnly, setShowOnly] = useState(false);
   const [records, setRecords] = useState([]);
   const [recording, setRecording] = useState(false);
@@ -56,7 +59,6 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
   const chunksRef = useRef([]);
   const urlsRef = useRef([]);
   const [playable, setPlayable] = useState([]);
-  useEffect(() => { try { const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'); if (Array.isArray(saved)) setFavourites(saved.filter(Number.isFinite)); } catch {} }, []);
   useEffect(() => { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favourites)); }, [favourites]);
   useEffect(() => {
     let disposed = false;
