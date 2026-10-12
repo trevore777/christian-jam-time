@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { connectDrive, disconnectDrive, driveConnected, uploadPractice } from '../lib/googleDriveClient';
 
 const FAVORITES_KEY = 'cjt:favorites:v1';
 const DB_NAME = 'cjt-practice-v1';
@@ -54,6 +55,8 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
   const [songKey, setSongKey] = useState('G');
   const [lyrics, setLyrics] = useState('');
   const [saving, setSaving] = useState(false);
+  const [driveOn, setDriveOn] = useState(false);
+  const [uploadingId, setUploadingId] = useState(null);
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
   const chunksRef = useRef([]);
@@ -117,6 +120,32 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
     await writeRecord(item, true);
     setRefresh(v => v + 1);
   }
+  async function renameRecord(item) {
+    const label = window.prompt('Rename recording', item.label);
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) { setMessage('Recording name cannot be empty.'); return; }
+    try { await writeRecord({ ...item, label: trimmed }); setRefresh(v => v + 1); }
+    catch (error) { setMessage(error.message); }
+  }
+  async function connectGoogle() {
+    setMessage('');
+    try { await connectDrive(); setDriveOn(true); setMessage('Google Drive connected for this browser session.'); }
+    catch (error) { setMessage(error.message); }
+  }
+  async function saveToDrive(item) {
+    setUploadingId(item.id); setMessage('');
+    try {
+      const ext = item.blob.type.includes('mp4') ? 'm4a' : item.blob.type.includes('ogg') ? 'ogg' : 'webm';
+      const safeName = item.label.replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 100) || 'Practice';
+      const filename = safeName + ' - ' + item.songNumber + ' - ' + item.createdAt.slice(0, 10) + '.' + ext;
+      const result = await uploadPractice({ blob: item.blob, filename });
+      await writeRecord({ ...item, driveUrl: result.url, driveId: result.id });
+      setDriveOn(driveConnected()); setRefresh(v => v + 1);
+      setMessage('Saved to Google Drive. Your original local recording has been kept.');
+    } catch (error) { setMessage('Drive upload failed: ' + error.message + '. Local recording kept.'); }
+    finally { setUploadingId(null); }
+  }
   async function saveSong(event) {
     event.preventDefault();
     setSaving(true); setMessage('');
@@ -127,7 +156,11 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
   }
   return <section className="card" style={{marginTop:12}}>
     <div className="sectionHeading"><div><small>PERSONAL LIBRARY</small><h2>Favourites & Practice</h2></div></div>
-    <p className="hint">Favourites and audio recordings are stored on this device. Download recordings to keep a backup or share them.</p>
+    <p className="hint">Recordings are kept on this device. Connect Google Drive to upload a named copy to your own Drive.</p>
+    <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:10}}>
+      <button type="button" className="secondary" onClick={connectGoogle}>{driveOn ? 'Google Drive connected ✓' : 'Connect Google Drive'}</button>
+      {driveOn && <button type="button" onClick={() => { disconnectDrive(); setDriveOn(false); setMessage('Google Drive disconnected.'); }}>Disconnect</button>}
+    </div>
     <label style={{display:'flex',gap:8,alignItems:'center',marginBottom:10}}><input type="checkbox" checked={showOnly} onChange={e => setShowOnly(e.target.checked)}/> Show favourites only ({favourites.length})</label>
     <div style={{maxHeight:180,overflow:'auto'}}>
       {songs.filter(s => !showOnly || favourites.includes(s.number)).map(song => <div key={song.number} style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0'}}>
@@ -141,7 +174,7 @@ export default function PracticeLibrary({ songs, selectedSong, onAddSong, canAdd
       {playable.map(item => <div key={item.id} style={{padding:'9px 0',borderBottom:'1px solid #ddd'}}>
         <div><b>{item.label}</b> · <small>{formatDate(item.createdAt)} · {(item.blob.size / 1048576).toFixed(2)} MB</small></div>
         <audio controls preload="none" src={item.url} style={{width:'100%',maxWidth:360}}/>
-        <div style={{display:'flex',gap:8}}><a href={item.url} download={`practice-${item.songNumber}-${item.id}.${item.blob.type.includes('mp4') ? 'm4a' : 'webm'}`}>Download</a><button type="button" onClick={() => removeRecord(item)}>Delete</button></div>
+        <div style={{display:'flex',gap:8}}><a href={item.url} download={`practice-${item.songNumber}-${item.id}.${item.blob.type.includes('mp4') ? 'm4a' : 'webm'}`}>Download</a><button type="button" onClick={() => renameRecord(item)}>Rename</button><button type="button" disabled={Boolean(uploadingId)} onClick={() => saveToDrive(item)}>{uploadingId === item.id ? 'Uploading…' : 'Save to Google Drive'}</button>{item.driveUrl && <a href={item.driveUrl} target="_blank" rel="noopener noreferrer">Open in Drive</a>}<button type="button" onClick={() => removeRecord(item)}>Delete</button></div>
       </div>)}
     </div>}
     {canAddSong && <div style={{borderTop:'1px solid #ddd',marginTop:12,paddingTop:12}}>
