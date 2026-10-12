@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getState, normalizeCode } from '../../../lib/rooms';
-import { getMasterSongbook, saveMasterSongbook } from '../../../lib/songbookStore';
+import { getState, normalizeCode } from '../../../../lib/rooms';
+import { getMasterSongbook, saveMasterSongbook } from '../../../../lib/songbookStore';
 
 export async function POST(request) {
   try {
@@ -14,7 +14,7 @@ export async function POST(request) {
     if (!title) return NextResponse.json({ ok: false, error: 'A song title is required.' }, { status: 400 });
     const songs = await getMasterSongbook();
     if (!songs) return NextResponse.json({ ok: false, error: 'Master songbook is not available.' }, { status: 503 });
-    const { redis } = await import('../../../lib/redis');
+    const { redis } = await import('../../../../lib/redis');
     const number = 0;
     const song = {
       id: 'custom-' + number, number, title,
